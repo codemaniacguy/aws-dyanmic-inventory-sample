@@ -1,0 +1,31 @@
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - ap-south-2         # add ap-south-1 too if your instances are in Mumbai
+  # - ap-south-1
+
+filters:
+  instance-state-name: running
+  tag:Environment: Dev
+  tag:Project: POC
+
+hostnames:
+  - tag:Name
+  - private_ip_address
+
+compose:
+  ansible_host: private_ip_address
+  ansible_user: ansible-agent
+
+keyed_groups:
+  - key: tags.Environment
+    prefix: env
+  - key: tags.Project
+    prefix: project
+
+# Friendly group for your playbooks:
+groups:
+  agent_servers: "'POC' in (tags.Project | default('')) and 'Dev' in (tags.Environment | default(''))"
+
+cache: false
+

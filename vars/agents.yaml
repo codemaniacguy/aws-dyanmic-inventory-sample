@@ -1,0 +1,4 @@
+# Vars consumed by both playbooks
+package: nginx
+package_service: nginx
+
