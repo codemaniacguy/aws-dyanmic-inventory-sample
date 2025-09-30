@@ -7,14 +7,27 @@
     - vars/agents.yaml
     - vars/vault.yaml   # keep only if you actually use secrets inside tasks/vars
   tasks:
-    - name: Update apt package index
+    - name: Update apt package index (Debian/Ubuntu)
       apt:
         update_cache: true
+      when: ansible_facts['os_family'] == "Debian"
 
-    - name: Install package
+    - name: Update yum/dnf package index (RHEL)
+      yum:
+        update_cache: true
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Install package on Debian/Ubuntu
       apt:
         name: "{{ package }}"
         state: present
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Install package on RHEL
+      yum:
+        name: "{{ package }}"
+        state: present
+      when: ansible_facts['os_family'] == "RedHat"
 
     - name: Ensure service is running and enabled
       service:

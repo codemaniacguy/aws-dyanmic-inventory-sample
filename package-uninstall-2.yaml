@@ -5,47 +5,77 @@
   become: true
   vars_files:
     - vars/agents.yaml
-    - vars/vault.yaml   # remove this line if you’re not actually using vault vars
+    - vars/vault.yaml   # remove if you're not using it
+
+  vars:
+    nginx_packages_common:
+      - nginx
+      - nginx-core
+      - nginx-common
+      - nginx-full
+      - nginx-light
+      - nginx-extras
 
   tasks:
-    - name: Update apt package index
+    # ----- Update package caches per OS -----
+    - name: Update apt package index (Debian/Ubuntu)
       ansible.builtin.apt:
         update_cache: true
+      when: ansible_facts['os_family'] == "Debian"
 
+    - name: Update dnf/yum metadata (RHEL)
+      ansible.builtin.yum:
+        update_cache: true
+      when: ansible_facts['os_family'] == "RedHat"
+
+    # ----- Service facts to decide if we need to stop it -----
     - name: Gather service facts
       ansible.builtin.service_facts:
 
     - name: Stop nginx if present
       ansible.builtin.service:
-        name: "{{ package_service }}"
+        name: "{{ package_service | default('nginx') }}"
         state: stopped
         enabled: false
-      when: "'{{ package_service }}.service' in services"
+      when: "'%s.service' % (package_service | default('nginx')) in ansible_facts.services"
 
-    # Purge all likely nginx packages (unit usually comes from nginx-core/common)
-    - name: Purge nginx packages (meta + variants)
+    # ----- Remove packages per OS -----
+    # Debian/Ubuntu: purge (remove config) + autoremove
+    - name: Purge nginx packages (Debian/Ubuntu)
       ansible.builtin.apt:
-        name:
-          - nginx
-          - nginx-core
-          - nginx-common
-          - nginx-full
-          - nginx-light
-          - nginx-extras
+        name: "{{ nginx_packages_common }}"
         state: absent
         purge: true
         autoremove: true
+      when: ansible_facts['os_family'] == "Debian"
 
-    # Best-effort catch-all
-    - name: Purge any remaining nginx* packages
+    - name: Purge any remaining nginx* packages (Debian/Ubuntu best-effort)
       ansible.builtin.apt:
         name: "nginx*"
         state: absent
         purge: true
         autoremove: true
+      when: ansible_facts['os_family'] == "Debian"
       ignore_errors: true
 
-    # Remove stray unit/drop-in files if they exist
+    # RHEL: remove packages (no 'purge' concept)
+    - name: Remove nginx packages (RHEL)
+      ansible.builtin.yum:
+        name:
+          - nginx
+          - nginx-all-modules
+          - nginx-mod-*
+        state: absent
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Remove any remaining nginx* packages (RHEL best-effort)
+      ansible.builtin.yum:
+        name: "nginx*"
+        state: absent
+      when: ansible_facts['os_family'] == "RedHat"
+      ignore_errors: true
+
+    # ----- Clean up units/config/logs on both families -----
     - name: Remove nginx systemd unit and drop-ins if present
       ansible.builtin.file:
         path: "{{ item }}"
@@ -53,11 +83,10 @@
       loop:
         - /etc/systemd/system/nginx.service
         - /etc/systemd/system/nginx.service.d
-        - /lib/systemd/system/nginx.service
-        - /usr/lib/systemd/system/nginx.service
+        - /lib/systemd/system/nginx.service          # Debian/Ubuntu
+        - /usr/lib/systemd/system/nginx.service      # RHEL
       ignore_errors: true
 
-    # Clean up configs/logs (optional)
     - name: Remove nginx config and logs
       ansible.builtin.file:
         path: "{{ item }}"
@@ -67,9 +96,8 @@
         - /var/log/nginx
       ignore_errors: true
 
-    # Refresh systemd
+    # ----- Refresh systemd -----
     - name: Reset failed units
-        # not idempotent—avoid marking changed/fail
       ansible.builtin.command: systemctl reset-failed
       changed_when: false
       failed_when: false
@@ -78,7 +106,7 @@
       ansible.builtin.command: systemctl daemon-reload
       changed_when: false
 
-    # Verify (won’t fail the play)
+    # ----- Verify (won’t fail the play) -----
     - name: Check nginx status (expect 'Unit nginx.service could not be found')
       ansible.builtin.command: systemctl status nginx
       register: nginx_status
